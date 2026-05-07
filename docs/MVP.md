@@ -13,6 +13,39 @@ The MVP should prove one thing:
 ## MVP goal
 Create a small, private prototype that ingests a limited set of Herson videos, extracts timestamped transcript chunks, stores them with useful Civ metadata, and answers early-game build-order questions with cited sources.
 
+## AI/model direction
+This project should be local-first for reasoning.
+
+Default reasoning model:
+- local Llama 3 or Llama 3-compatible model hosted from the user's homelab / local AI setup
+
+Expected local model setup:
+- model files may live under `C:\AI`
+- the app should not depend on that path directly
+- the model should be exposed through an API layer such as Ollama, LM Studio, text-generation-webui, or another OpenAI-compatible local endpoint
+
+Recommended provider abstraction:
+
+```env
+CHAT_PROVIDER=local
+CHAT_BASE_URL=http://localhost:11434/v1
+CHAT_MODEL=llama3
+
+EMBEDDING_PROVIDER=local
+EMBEDDING_BASE_URL=http://localhost:11434
+EMBEDDING_MODEL=nomic-embed-text
+
+OPENAI_API_KEY=
+DATABASE_URL=postgresql://...
+```
+
+OpenAI should be optional fallback only, not a hard dependency.
+
+Important:
+- use a dedicated embedding model for transcript search when possible
+- do not assume the chat model can generate embeddings
+- keep chat/reasoning provider and embedding provider separate
+
 ## Non-goals
 - Do not clone Herson's voice or persona.
 - Do not fine-tune a model on his content.
@@ -92,6 +125,7 @@ Given a user question, retrieve relevant chunks by:
 
 ### 5. Answer generation
 Answers must:
+- use the local Llama 3 reasoning provider by default
 - give a practical recommendation
 - explain the reasoning briefly
 - cite timestamped sources
@@ -164,15 +198,17 @@ MVP is successful if:
 - Newer relevant advice is preferred over older advice.
 - The assistant refuses or hedges when evidence is weak.
 - A reviewer can inspect and correct chunk metadata.
+- Reasoning works through the local Llama 3 provider path.
 
 ## First build sequence
 1. Create repo structure.
 2. Build transcript ingestion script.
 3. Store transcript chunks locally first.
-4. Add embeddings and vector search.
-5. Add simple chat endpoint.
-6. Add citation formatting.
-7. Add metadata tagging pass.
-8. Add admin review page.
-9. Test against 20 seed questions.
-10. Decide whether to pitch, pause, or productize.
+4. Add local embeddings and vector search.
+5. Add local Llama 3 chat/reasoning provider.
+6. Add simple chat endpoint.
+7. Add citation formatting.
+8. Add metadata tagging pass.
+9. Add admin review page.
+10. Test against 20 seed questions.
+11. Decide whether to pitch, pause, or productize.
