@@ -29,6 +29,12 @@ Private MVP for a Civ 6 multiplayer strategy assistant powered by transcript ret
 ## MVP status
 Initial scaffold only.
 
+## Required AI Workflow Review
+
+Before beginning AI-assisted implementation, debugging, refactoring, migration, or production fix work in this repository, review [docs/AI_WORKFLOW_GUARDRAILS.md](./docs/AI_WORKFLOW_GUARDRAILS.md).
+
+Default behavior: smallest safe change, lowest blast radius, no unrelated file edits, no speculative rewrites, and explicit consideration of scale, queues, caching, indexes, retries, idempotency, rollback, and operational safety.
+
 ## Next steps
 1. Initialize Next.js app
 2. Add Supabase schema
