@@ -172,7 +172,8 @@ hersonbot/
 ╠══════════════════════════════════════════════════════════════════════╣
 ║                                                                      ║
 ║  [Source Collector Agent]                                            ║
-║    │  Accepts: YouTube URL, audio file, transcript file, notes.md   ║
+║    │  Accepts: YouTube URL, playlist URL, audio file, notes.md      ║
+║    │  Playlist: enumerates all video URLs → queues each separately  ║
 ║    │  Validates: no credentials, no DMs, approved creators only     ║
 ║    ▼                                                                 ║
 ║  content_items table (status: 'queued')                              ║
@@ -694,10 +695,24 @@ async function runPipeline(contentItemId: bigint) {
   await canonJudgeAgent.run(contentItemId);
   // RAG ingestion runs separately after human review
 }
+
+// Playlist fan-out: Source Collector enumerates all video IDs, queues each,
+// then Orchestrator processes them in batches to respect API rate limits.
+async function runPlaylist(playlistUrl: string, batchSize = 5) {
+  const videoUrls = await sourceCollectorAgent.enumeratePlaylist(playlistUrl);
+  for (const batch of chunk(videoUrls, batchSize)) {
+    await Promise.all(batch.map(url => sourceCollectorAgent.queue(url)));
+    const queued = await db.query(
+      `SELECT id FROM content_items WHERE status = 'queued' ORDER BY created_at`
+    );
+    for (const row of queued.rows) await runPipeline(row.id);
+  }
+}
 ```
 
 ### v1 Success Criteria
 
+- Entire YouTube playlist ingested in a single orchestrator command
 - 50+ sources ingested across YouTube + audio + documents
 - Auto-approval rate >60% (Canon Judge handles most)
 - Human review queue stays manageable (<20 pending items at any time)
@@ -749,6 +764,8 @@ async function runPipeline(contentItemId: bigint) {
 | Review queue grows faster than reviewer can handle | Medium | Auto-approve high-confidence items; prioritize queue by recency |
 | LLM hallucination in curation agents | High | Agents use structured output with validation; human review is the final gate |
 | YouTube transcript availability varies | Medium | `transcript_status = 'empty'` already handled; add Whisper fallback for empty videos |
+| Playlist bulk ingest overwhelms embedding quota | High | Batch size limit (default 5 concurrent); exponential backoff on rate-limit errors; resume from last queued item |
+| Playlist contains duplicate or private videos | Low | Skip private/unavailable videos gracefully; idempotent URL check prevents double-ingestion |
 
 ---
 
@@ -799,6 +816,17 @@ Issue 9: [Agent] Implement Orchestrator agent
   - agents/orchestrator.ts
   - Sequential pipeline runner
   - CLI entry: scripts/run-pipeline.ts --content-item-id <id>
+  - Also accepts: --playlist-url <url> to fan out across all videos
+
+Issue 9b: [Ingestion] YouTube playlist bulk ingestion
+  - Source Collector accepts a playlist URL in addition to a single video URL
+  - Uses YouTube Data API v3 (requires YOUTUBE_API_KEY env var) to enumerate all video IDs
+  - Idempotent: skips any video URL already present in content_items
+  - Inserts one content_item per video with status = 'queued'
+  - Orchestrator then processes each queued item sequentially (or in configurable batches)
+  - Rate-limits embedding calls to avoid API quota exhaustion
+  - CLI: scripts/ingest-playlist.ts --playlist-url <url> [--dry-run] [--batch-size 5]
+  - Dry-run mode prints video list without inserting, for review before committing
 
 Issue 10: [Ingestion] Audio file ingestion via Whisper
   - scripts/ingest-audio.ts
