@@ -101,10 +101,35 @@ Two logical services share the same Postgres database but have different deploym
 
 | Service | Role | Deployed As |
 |---|---|---|
-| **Ingestion Pipeline** | Source collection → processing → curation → approval queue | Background workers / CLI scripts / cron jobs |
-| **Bot Layer** | Query → retrieval → answer → citations | Next.js app (existing) |
+| **Ingestion Pipeline** | Source collection → processing → curation → approval queue | CLI scripts run locally or on personal machine |
+| **Bot Layer** | Query → retrieval → answer → citations | Next.js app (existing, hosted) |
 
-In MVP and v1, both live in the same repo as a monorepo. The ingestion workers run as CLI scripts or lightweight Node processes — not as part of the Next.js server. In a future phase, the ingestion pipeline can be extracted to a separate service.
+In MVP and v1, both live in the same repo as a monorepo. The ingestion workers run as CLI scripts — not as part of the Next.js server. Heavy workloads (frame extraction, long Whisper transcriptions, vision model calls) are intentionally designed to run on a **personal machine** pointing at a local Ollama instance, with results written directly to the shared Postgres database.
+
+### 2.2a Local-First AI Model Strategy
+
+The existing `lib/ai.ts` already uses an OpenAI-compatible client abstraction. All agents inherit this — no agent calls OpenAI directly. The model tier in use depends on the task:
+
+| Task | Recommended Local Model | Ollama Tag | Fallback |
+|---|---|---|---|
+| Text chat / answer generation | Llama 3 8B or 70B | `llama3` / `llama3:70b` | `gpt-4o-mini` |
+| Text embeddings | Nomic Embed Text | `nomic-embed-text` | `text-embedding-3-small` |
+| Transcript cleaning / curation | Llama 3 8B | `llama3` | `gpt-4o-mini` |
+| Entity extraction (structured output) | Llama 3 8B (with JSON mode) | `llama3` | `gpt-4o` |
+| Canon judgment (nuanced classification) | Llama 3 70B or stronger | `llama3:70b` | `gpt-4o` |
+| **Visual frame analysis** | LLaVA 13B or Llama 3.2 Vision | `llava:13b` / `llama3.2-vision` | `gpt-4o` (vision) |
+| **Audio transcription (Whisper)** | Whisper large-v3 (local) | `whisper.cpp` binary | OpenAI Whisper API |
+
+**Personal machine is the right place for:**
+- Video download + frame extraction (disk/CPU intensive)
+- Whisper transcription of long videos (RAM/GPU intensive)
+- Vision model frame analysis (VRAM intensive)
+- Full playlist bulk ingestion runs
+
+**Hosted server handles:**
+- Bot query serving (low compute, high availability)
+- Text embedding at query time (lightweight)
+- Admin review UI
 
 ### 2.3 Monorepo Folder Layout (Proposed)
 
@@ -126,7 +151,8 @@ hersonbot/
 ├── agents/                       # NEW: agent implementations
 │   ├── orchestrator.ts
 │   ├── source-collector.ts
-│   ├── transcription.ts
+│   ├── transcription.ts           # Whisper (local) or youtube-transcript
+│   ├── visual-context.ts          # NEW: frame extraction + vision model
 │   ├── cleaner.ts
 │   ├── curator.ts
 │   ├── canon-judge.ts
@@ -187,6 +213,16 @@ hersonbot/
 ║  content_items (status: 'transcribed') + raw_transcript stored      ║
 ║    │                                                                 ║
 ║    ▼                                                                 ║
+║  [Visual Context Agent]  ← runs on personal machine                 ║
+║    │  Downloads video via yt-dlp into temp volume                   ║
+║    │  Extracts 1 frame per 10–30s via ffmpeg                        ║
+║    │  Sends frames to vision LLM (llava:13b or llama3.2-vision)     ║
+║    │  Prompt: "What game, civ, leader, turn, and map are visible?"  ║
+║    │  Aligns visual metadata to transcript timestamps               ║
+║    │  Writes: civ, leader, era, turn_range, map_context fields      ║
+║    │  into transcript_chunks.metadata_json                          ║
+║    ▼  (runs in parallel with Transcription, merges after)           ║
+║                                                                      ║
 ║  [Transcript Cleaner Agent]                                          ║
 ║    │  Removes filler words, auto-corrects known names               ║
 ║    │  Splits into candidate chunks (~60s or ~500 tokens)            ║
@@ -269,8 +305,9 @@ hersonbot/
 |---|---|---|---|---|
 | **Orchestrator** | Manual CLI or cron | Source URL or file path | Queued pipeline run | No (entry point) |
 | **Source Collector** | Orchestrator | URL or file path | `content_items` record (status: queued) | Optional allowlist check |
-| **Transcription** | Source Collector done | `content_item` (video/audio/text) | Raw transcript text + timestamps | No |
-| **Transcript Cleaner** | Transcription done | Raw transcript | Cleaned chunks in `transcript_chunks` | No |
+| **Transcription** | Source Collector done | `content_item` (video/audio/text) | Raw transcript text + timestamps — Whisper locally for audio/video | No |
+| **Visual Context** | Source Collector done (parallel with Transcription) | Video file (via yt-dlp) | Frame-derived metadata: civ, leader, turn, map → `metadata_json` — runs on personal machine | No |
+| **Transcript Cleaner** | Transcription + Visual Context done | Raw transcript + visual metadata | Cleaned chunks with enriched metadata in `transcript_chunks` | No |
 | **Entity Extractor** | Cleaner done | Chunks | Entities + metadata tags in `entities` + `metadata_json` | No |
 | **Quote/Clip Indexer** | Cleaner done | Chunks | Notable quote records in `quotes` table | Optional |
 | **Knowledge Curator** | Entity Extractor done | Chunks + entities | `knowledge_claims` records (status: needs_review) | No |
@@ -854,6 +891,20 @@ Issue 14: [Admin] Add quote browser to admin UI
 Issue 15: [Auth] Token-based admin route protection
   - Middleware: check ADMIN_TOKEN header/cookie
   - Applies to all /admin/* routes
+
+Issue 16: [Agent] Implement Visual Context agent
+  - agents/visual-context.ts
+  - Prerequisites: yt-dlp and ffmpeg installed on personal machine
+  - Downloads video to temp dir via yt-dlp
+  - Extracts 1 frame per configurable interval (default: 30s) via ffmpeg
+  - Sends each frame to vision-capable Ollama model (llava:13b or llama3.2-vision)
+  - Structured prompt → JSON: {civ, leader, era, turn, map_context, confidence}
+  - Aligns frame timestamps to transcript chunk timestamp ranges
+  - Merges into transcript_chunks.metadata_json (fills NULL fields only; does not overwrite)
+  - Cleans up temp frames after processing
+  - New env vars: VISION_BASE_URL, VISION_MODEL, VISION_API_KEY, FRAME_INTERVAL_SECONDS
+  - Designed to run locally: DATABASE_URL points to remote Postgres, models run on local Ollama
+  - CLI: scripts/run-visual-context.ts --content-item-id <id> [--frame-interval 30]
 ```
 
 ---
