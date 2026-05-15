@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "ingest": "tsx scripts/ingest-youtube.ts"
+    "ingest": "tsx scripts/ingest-youtube.ts",
+    "ingest:rag": "tsx scripts/ingest-rag.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "4.2.4",
