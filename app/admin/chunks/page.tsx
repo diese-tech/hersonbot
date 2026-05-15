@@ -22,9 +22,10 @@ export default async function ChunksPage() {
       <div className="mx-auto max-w-6xl">
         <header className="mb-5 flex items-center justify-between border-b border-[#d8d1c3] pb-4">
           <h1 className="text-2xl font-semibold">Transcript chunks</h1>
-          <Link className="text-sm font-medium text-[#355f8a]" href="/">
-            Chat
-          </Link>
+          <div className="flex gap-4 text-sm font-medium text-[#355f8a]">
+            <Link href="/admin/review">Review queue</Link>
+            <Link href="/">Chat</Link>
+          </div>
         </header>
 
         {"error" in result ? (
