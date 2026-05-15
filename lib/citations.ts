@@ -11,6 +11,7 @@ export function formatCitation(chunk: RetrievedChunk, index: number) {
     title: chunk.videoTitle,
     url: timestampUrl(chunk.videoUrl, chunk.timestampStart),
     timestamp: formatTimestamp(chunk.timestampStart),
+    contentType: chunk.contentType,
     text: chunk.cleanedText,
   };
 }

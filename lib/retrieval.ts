@@ -13,6 +13,7 @@ export type RetrievedChunk = {
   confidence: number;
   freshnessScore: number;
   similarity: number | null;
+  contentType: string;
 };
 
 export async function retrieveChunks(question: string, limit = 6) {
@@ -36,10 +37,12 @@ export async function retrieveChunks(question: string, limit = 6) {
         c.metadata_json as metadata,
         c.confidence::float as confidence,
         c.freshness_score::float as "freshnessScore",
-        (1 - (c.embedding <=> $1::vector))::float as similarity
+        (1 - (c.embedding <=> $1::vector))::float as similarity,
+        coalesce(c.content_type, 'unknown') as "contentType"
       from transcript_chunks c
       join videos v on v.id = c.video_id
       where c.embedding is not null
+        and c.status = 'indexed'
       order by (c.embedding <=> $1::vector) - (c.freshness_score::float * 0.03) asc
       limit $2
     `,
@@ -63,9 +66,11 @@ async function retrieveByText(question: string, limit: number) {
         c.metadata_json as metadata,
         c.confidence::float as confidence,
         c.freshness_score::float as "freshnessScore",
-        null::float as similarity
+        null::float as similarity,
+        coalesce(c.content_type, 'unknown') as "contentType"
       from transcript_chunks c
       join videos v on v.id = c.video_id
+      where c.status = 'indexed'
       order by ts_rank(to_tsvector('english', c.cleaned_text), plainto_tsquery('english', $1)) desc,
         c.freshness_score desc
       limit $2
