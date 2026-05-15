@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const context = chunks
       .map((chunk, index) => {
         const citation = citations[index];
-        return `[${citation.id}] ${chunk.videoTitle} ${citation.timestamp}\n${chunk.cleanedText}`;
+        return `[${citation.id}] ${chunk.videoTitle} ${citation.timestamp} [type: ${chunk.contentType}]\n${chunk.cleanedText}`;
       })
       .join("\n\n");
 
