@@ -1,6 +1,5 @@
 import "dotenv/config";
 import { YoutubeTranscript } from "youtube-transcript";
-import { embedText } from "@/lib/ai";
 import { chunkTranscript, type TranscriptLine } from "@/lib/chunking";
 import { closePool, query } from "@/lib/db";
 
@@ -13,6 +12,8 @@ type Args = {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+
+  console.log(`Fetching transcript for: ${args.title}`);
   const transcript = await YoutubeTranscript.fetchTranscript(args.url);
   const lines = transcript.map((line) => ({
     text: line.text,
@@ -21,33 +22,37 @@ async function main() {
   })) satisfies TranscriptLine[];
 
   const chunks = chunkTranscript(lines);
+
   const video = await upsertVideo(args, chunks.length);
+  const contentItem = await upsertContentItem(args, lines);
+
   await query("delete from transcript_chunks where video_id = $1", [video.id]);
 
   for (const chunk of chunks) {
-    const embedding = await embedText(chunk.cleanedText);
     await query(
       `
         insert into transcript_chunks (
           video_id,
+          content_item_id,
           timestamp_start,
           timestamp_end,
           raw_text,
           cleaned_text,
-          embedding,
           metadata_json,
           confidence,
-          freshness_score
+          freshness_score,
+          status,
+          content_type
         )
-        values ($1, $2, $3, $4, $5, $6::vector, $7::jsonb, $8, $9)
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, 'needs_review', 'unknown')
       `,
       [
         video.id,
+        contentItem.id,
         chunk.timestampStart,
         chunk.timestampEnd,
         chunk.rawText,
         chunk.cleanedText,
-        embedding.length > 0 ? `[${embedding.join(",")}]` : null,
         JSON.stringify(baseMetadata(args, chunk.timestampStart, chunk.timestampEnd)),
         0.6,
         freshnessScore(args.uploadDate),
@@ -55,7 +60,13 @@ async function main() {
     );
   }
 
-  console.log(`Ingested ${chunks.length} chunks for ${args.title}.`);
+  await query(
+    "update content_items set status = $1, updated_at = now() where id = $2",
+    [chunks.length > 0 ? "transcribed" : "rejected", contentItem.id],
+  );
+
+  console.log(`Queued ${chunks.length} chunks for review.`);
+  console.log(`Open /admin/review to approve chunks, then run: npm run ingest:rag`);
   await closePool();
 }
 
@@ -79,6 +90,28 @@ async function upsertVideo(args: Args, chunkCount: number) {
       args.uploadDate ?? null,
       chunkCount > 0 ? "ready" : "empty",
     ],
+  );
+
+  return result.rows[0];
+}
+
+async function upsertContentItem(args: Args, lines: TranscriptLine[]) {
+  const rawTranscript = lines.map((l) => l.text).join(" ");
+  const result = await query<{ id: number }>(
+    `
+      insert into content_items (source_type, source_url, source_title, creator, upload_date, status, raw_transcript, ingested_by)
+      values ('youtube', $1, $2, $3, $4, 'transcribing', $5, 'ingest-youtube')
+      on conflict (source_url)
+      do update set
+        source_title = excluded.source_title,
+        creator = excluded.creator,
+        upload_date = excluded.upload_date,
+        raw_transcript = excluded.raw_transcript,
+        status = 'transcribing',
+        updated_at = now()
+      returning id
+    `,
+    [args.url, args.title, args.creator, args.uploadDate ?? null, rawTranscript],
   );
 
   return result.rows[0];
