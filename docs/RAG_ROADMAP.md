@@ -808,31 +808,31 @@ async function runPlaylist(playlistUrl: string, batchSize = 5) {
 
 ## 14. GitHub Issues for Future Implementation
 
-The following issues should be created and assigned to Codex for implementation after this roadmap is reviewed and approved:
+Issues 1–5 are implemented and merged to `main` (PR #5). Issues 6–16 are open in the GitHub issue tracker.
 
 ```
-Issue 1: [Schema] Add content_items table and migrate videos table
-  - Create db/migrations/002_content_items.sql
-  - Add status, content_type, reviewed_by, reviewed_at columns to transcript_chunks
-  - Update ingest-youtube.ts to use content_items
+✅ Issue 1: [Schema] Add content_items table and migrate videos table
+  - db/migrations/001_initial.sql (baseline)
+  - db/migrations/002_content_items.sql (content_items + extend transcript_chunks)
+  - ingest-youtube.ts updated to create content_items, no inline embedding
 
-Issue 2: [Admin] Build /admin/review human review queue UI
-  - List chunks with status = 'needs_review'
-  - Approve / reject / edit actions
-  - Show content_type, confidence, source link
+✅ Issue 2: [Admin] Build /admin/review human review queue UI
+  - app/admin/review/page.tsx — card-based review queue
+  - app/admin/review/actions.ts — Server Actions for approve/reject
+  - Content type selector and optional review notes per chunk
 
-Issue 3: [Retrieval] Filter retrieval to status = 'indexed' only
-  - Update lib/retrieval.ts query to add WHERE status = 'indexed'
-  - Add migration to mark all existing chunks as 'indexed' (backfill)
+✅ Issue 3: [Retrieval] Filter retrieval to status = 'indexed' only
+  - lib/retrieval.ts: both query paths filter WHERE status = 'indexed'
+  - Existing chunks default to 'indexed' via migration — no backfill needed
 
-Issue 4: [Ingestion] Manual RAG embedding trigger script
-  - scripts/ingest-rag.ts: embed all approved, un-embedded chunks
-  - Called by reviewer after approving items
+✅ Issue 4: [Ingestion] Manual RAG embedding trigger script
+  - scripts/ingest-rag.ts: embeds all approved chunks, marks as indexed
+  - npm run ingest:rag
+  - Idempotent — safe to re-run
 
-Issue 5: [API] Expose content_type in /api/chat response
-  - Include chunk.content_type in retrieval result
-  - Include in citation object
-  - Update system prompt to distinguish canon/speculation/joke
+✅ Issue 5: [API] Expose content_type in /api/chat response
+  - contentType added to RetrievedChunk, citations, and LLM context
+  - System prompt instructs LLM to distinguish canon/speculation/joke
 
 Issue 6: [Agent] Implement Entity Extractor agent
   - agents/entity-extractor.ts
@@ -909,14 +909,41 @@ Issue 16: [Agent] Implement Visual Context agent
 
 ---
 
-## 15. Clear Next Action
+## 15. Current Status and Next Actions
 
-**Before writing any code**, complete this checklist in order:
+### What is done
 
-1. **Review this document** — confirm the agent roles, schema design, and tiered trust pipeline match your vision for HersonBot's content scope (Civ VI only vs. broader creator content)
-2. **Clarify content scope** — is the knowledge base Civ VI strategy only, or does it include lore, jokes, characters, and general creator content across games/shows?
-3. **Decide on auto-approve policy** — confirm the 0.85 confidence threshold for Canon Judge auto-approval feels right (can be tuned later, but set expectations now)
-4. **Seed review queue** — run the existing `ingest-youtube.ts` on 5–10 videos to populate `transcript_chunks`, then begin GitHub Issue 2 (the review UI) so you can see what you're working with
-5. **Create GitHub Issues 1–5** — these are the MVP issues; they unlock the human review workflow and retrieval filtering without any agents yet
+- ✅ Tiered trust pipeline implemented (needs_review → approved → indexed)
+- ✅ `content_items` table and `transcript_chunks` extensions (migration 002)
+- ✅ Human review queue at `/admin/review`
+- ✅ Retrieval filtered to `status = 'indexed'` only
+- ✅ `npm run ingest:rag` embedding trigger
+- ✅ `content_type` flowing through retrieval → citations → LLM context
+- ✅ `npm run migrate` automated migration runner
+- ✅ GitHub Issues 6–18 created and ready for implementation
 
-The first code change should be **Issue 1 (schema migration)** followed by **Issue 2 (review UI)**. Everything else builds on those.
+### Infrastructure setup (one-time, not yet done)
+
+1. Start Postgres on the Ubuntu server: `docker compose up -d`
+2. On Windows: `npm install`, configure `.env`, `npm run migrate`
+3. Pull Ollama models: `ollama pull nomic-embed-text && ollama pull llama3`
+4. Seed the review queue: `npm run ingest -- --url <url> --title "..." --upload-date YYYY-MM-DD`
+5. Review at `http://localhost:3000/admin/review`, then `npm run ingest:rag`
+
+### Next implementation priorities (GitHub Issues)
+
+**v1 agent pipeline — implement in this order:**
+
+1. **GitHub #15** — `003_entities_quotes.sql` migration (schema prerequisite for agents)
+2. **GitHub #7** — Entity Extractor agent (`agents/entity-extractor.ts`)
+3. **GitHub #8** — Knowledge Curator agent (`agents/curator.ts`)
+4. **GitHub #9** — Canon Judge agent (`agents/canon-judge.ts`)
+5. **GitHub #10** — Orchestrator agent + `scripts/run-pipeline.ts`
+6. **GitHub #11** — Playlist bulk ingestion (`scripts/ingest-playlist.ts`)
+
+**Parallel / independent:**
+- **GitHub #14** — Evaluation runner and baseline dataset (can be done any time after seeding videos)
+- **GitHub #17** — Admin auth middleware (only needed before public exposure)
+- **GitHub #12** — Audio ingestion via Whisper (when ready to ingest non-YouTube content)
+- **GitHub #13** — Document ingestion (for notes, patch notes, lore docs)
+- **GitHub #18** — Visual Context agent (requires `yt-dlp`, `ffmpeg`, and vision Ollama model)
